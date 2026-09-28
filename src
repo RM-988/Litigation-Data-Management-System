@@ -1,0 +1,145 @@
+"""A small command-line litigation data practice tool.
+
+Uses fictional records only; not intended for real legal work.
+"""
+import argparse
+import csv
+from collections import Counter
+from pathlib import Path
+
+REQUIRED_FIELDS = {
+    "case_id", "client", "case_name", "status", "opened_date", "document_count"
+}
+VALID_STATUSES = {"open", "closed"}
+
+
+def load_cases(path):
+    with open(path, newline="", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
+        missing = REQUIRED_FIELDS - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Missing CSV columns: {', '.join(sorted(missing))}")
+        return list(reader)
+
+
+def validate_cases(cases):
+    issues = []
+    seen_ids = set()
+    valid = []
+    for row_num, case in enumerate(cases, start=2):
+        case_id = case["case_id"].strip()
+        status = case["status"].strip().lower()
+        client = case["client"].strip()
+        opened_date = case["opened_date"].strip()
+        try:
+            document_count = int(case["document_count"])
+            if document_count < 0:
+                raise ValueError
+        except ValueError:
+            issues.append(f"Row {row_num}: document_count must be a non-negative integer")
+            continue
+
+        row_errors = []
+        if not case_id:
+            row_errors.append("case_id is blank")
+        elif case_id in seen_ids:
+            row_errors.append(f"duplicate case_id '{case_id}'")
+        if not client:
+            row_errors.append("client is blank")
+        if not case["case_name"].strip():
+            row_errors.append("case_name is blank")
+        if status not in VALID_STATUSES:
+            row_errors.append("status must be Open or Closed")
+        try:
+            from datetime import date
+            date.fromisoformat(opened_date)
+        except ValueError:
+            row_errors.append("opened_date must use YYYY-MM-DD")
+
+        if case_id:
+            seen_ids.add(case_id)
+        if row_errors:
+            issues.extend(f"Row {row_num}: {error}" for error in row_errors)
+        else:
+            normalized = dict(case)
+            normalized["case_id"] = case_id
+            normalized["client"] = client
+            normalized["status"] = status.title()
+            normalized["document_count"] = str(document_count)
+            valid.append(normalized)
+    return valid, issues
+
+
+def print_cases(cases):
+    if not cases:
+        print("No matching cases found.")
+        return
+    for case in cases:
+        print(
+            f'{case["case_id"]} | {case["client"]} | {case["case_name"]} | '
+            f'{case["status"]} | {case["opened_date"]} | '
+            f'{case["document_count"]} documents'
+        )
+
+
+def print_summary(cases):
+    counts = Counter(case["status"] for case in cases)
+    documents = sum(int(case["document_count"]) for case in cases)
+    print(f"Total cases: {len(cases)}")
+    print(f"Open cases: {counts.get('Open', 0)}")
+    print(f"Closed cases: {counts.get('Closed', 0)}")
+    print(f"Total documents: {documents}")
+
+
+def export_cases(cases, output_path):
+    if not cases:
+        print("No valid records to export.")
+        return
+    with open(output_path, "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=list(cases[0].keys()))
+        writer.writeheader()
+        writer.writerows(cases)
+    print(f"Exported {len(cases)} valid records to {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Practice tool for fictional litigation records")
+    parser.add_argument("--input", default="data/sample_cases.csv", help="Input CSV path")
+    parser.add_argument("--list", action="store_true", help="List all valid cases")
+    parser.add_argument("--status", choices=["Open", "Closed"], help="Filter by case status")
+    parser.add_argument("--client", help="Filter by exact client name")
+    parser.add_argument("--summary", action="store_true", help="Show case summary")
+    parser.add_argument("--validate", action="store_true", help="Show data validation results")
+    parser.add_argument("--export", metavar="PATH", help="Export valid records to CSV")
+    args = parser.parse_args()
+
+    try:
+        cases = load_cases(args.input)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+
+    valid, issues = validate_cases(cases)
+    if args.validate:
+        print(f"Valid records: {len(valid)}")
+        print(f"Issues found: {len(issues)}")
+        for issue in issues:
+            print(f"- {issue}")
+
+    filtered = valid
+    if args.status:
+        filtered = [case for case in filtered if case["status"] == args.status]
+    if args.client:
+        filtered = [case for case in filtered if case["client"].casefold() == args.client.casefold()]
+
+    if args.list or args.status or args.client:
+        print_cases(filtered)
+    if args.summary:
+        print_summary(filtered)
+    if args.export:
+        export_cases(valid, args.export)
+    if not any((args.list, args.status, args.client, args.summary, args.validate, args.export)):
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
